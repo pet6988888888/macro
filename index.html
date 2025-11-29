@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Food Macro Analyzer</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Firebase/Firestore SDKs for setup variables (even if not used for persistence) -->
+    <script type="module">
+        // Basic Firebase imports needed to satisfy the environment requirements, 
+        // even though no persistence operations are being executed per user request.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the environment (required for existence check)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            const app = initializeApp(firebaseConfig);
+            const db = getFirestore(app);
+            const auth = getAuth(app);
+            // Sign in to establish a user context, necessary for the overall environment.
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error("Custom token sign-in failed:", e));
+            } else {
+                signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed:", e));
+            }
+        }
+    </script>
+    <!-- Use Inter font family -->
+    <style>
+        /* Permanent Dark Mode Styles for high contrast */
+        :root {
+            --bg-color: #111827; /* Darkest background (Gray 900) */
+            --text-color: #f3f4f6; /* Very light text (Gray 100) */
+            --card-bg: #1f2937; /* Slightly lighter dark card (Gray 800) */
+            --card-shadow: 0 10px 15px -3px rgba(255, 255, 255, 0.08), 0 4px 6px -2px rgba(255, 255, 255, 0.04);
+            --placeholder-bg: #374151; /* Dark gray for progress circle background */
+            --subtle-text: #9ca3af; /* Gray 400 for descriptions */
+        }
+        
+        /* Apply CSS variables globally */
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-color); 
+            color: var(--text-color);
+        }
+        .card { 
+            background-color: var(--card-bg);
+            box-shadow: var(--card-shadow); 
+        }
+        .progress-circle {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: conic-gradient(
+                #ef4444 var(--carb-angle),
+                #3b82f6 0 var(--protein-angle),
+                #22c55e 0 var(--fat-angle),
+                var(--placeholder-bg) 0
+            );
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-start justify-center p-4 sm:p-8">
+
+    <div class="w-full max-w-lg">
+        
+        <!-- Header with Title -->
+        <header class="flex justify-center items-center mb-4">
+            <h1 class="text-3xl font-extrabold text-center text-gray-100">
+                <span class="text-blue-500">Macro</span>Scan
+            </h1>
+        </header>
+
+        <!-- Description -->
+        <p class="text-center text-sm text-gray-400 mb-8">
+            Upload a clear photo of your meal below. Our AI will analyze the contents and provide an estimate of calories and macronutrients (Protein, Carbs, Fat) for the entire meal.
+        </p>
+
+        <!-- Input Card -->
+        <div class="card p-6 rounded-xl mb-6">
+            <h2 class="text-xl font-semibold text-gray-200 mb-4">Analyze Your Meal</h2>
+            
+            <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="processImage(event)">
+            
+            <label for="imageInput" id="uploadLabel" class="flex flex-col items-center justify-center p-6 border-2 border-dashed border-blue-600 rounded-lg cursor-pointer bg-gray-900/30 hover:bg-gray-700/50 transition duration-300">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-blue-400 mb-2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                </svg>
+                <span class="text-lg font-medium text-blue-400">Tap to Upload Photo</span>
+                <span class="text-sm text-gray-500 mt-1">or use your camera to capture food</span>
+            </label>
+
+            <!-- Image Preview Area -->
+            <div id="imagePreviewContainer" class="hidden mt-4">
+                <p class="text-sm font-medium text-gray-300 mb-2">Image Preview:</p>
+                <img id="imagePreview" class="w-full h-40 object-cover rounded-lg mb-4 shadow-inner" alt="Food preview">
+                
+                <!-- Portion Context Input (Suggestion 1) -->
+                <label for="portionContextInput" class="block text-sm font-medium text-gray-300 mt-2 mb-1">Portion/Context (e.g., 'With a fork for scale', 'Half a chicken breast'):</label>
+                <input type="text" id="portionContextInput" placeholder="Optional: Describe size or reference object" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:ring-blue-500 focus:border-blue-500 transition duration-150">
+
+                <button onclick="document.getElementById('imageInput').click()" class="w-full py-2 bg-gray-600 text-gray-200 rounded-lg font-semibold hover:bg-gray-500 transition duration-300 mb-2 mt-4">Change Image</button>
+                <button onclick="startAnalysis()" id="analyzeButton" class="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition duration-300 disabled:opacity-50" disabled>
+                    Analyze Macros
+                </button>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="hidden mt-4 p-4 text-center bg-blue-900 text-blue-200 rounded-lg">
+                <p class="font-semibold flex items-center justify-center">
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Analyzing food... Please wait up to 30 seconds.
+                </p>
+            </div>
+
+            <!-- Error Message -->
+            <div id="errorMessage" class="hidden mt-4 p-4 bg-red-900 text-red-200 rounded-lg font-medium"></div>
+
+        </div>
+
+        <!-- Results Card (Hidden initially) -->
+        <div id="resultsCard" class="card p-6 rounded-xl hidden">
+            <h2 class="text-2xl font-bold text-gray-100 mb-1" id="foodTitle"></h2>
+            <p class="text-sm text-gray-400 mb-4" id="servingInfo"></p>
+            
+            <!-- Confidence Display -->
+            <div class="flex items-center mb-6">
+                <span class="text-xs font-semibold uppercase tracking-wider mr-2 text-gray-400">Confidence:</span>
+                <span id="confidenceIndicator" class="font-bold text-sm text-yellow-400"></span>
+            </div>
+
+            <div class="flex flex-col sm:flex-row items-center justify-between">
+                
+                <!-- Calorie Circle -->
+                <div class="flex flex-col items-center mb-6 sm:mb-0">
+                    <div id="calorieCircle" class="progress-circle flex items-center justify-center text-center font-bold text-lg p-2 relative">
+                        <div class="absolute w-full h-full rounded-full bg-gray-800 flex items-center justify-center">
+                            <span id="calorieValue" class="text-3xl font-extrabold text-green-500">0</span>
+                        </div>
+                    </div>
+                    <span class="mt-2 text-md font-medium text-gray-400">Total Calories (kcal)</span>
+                </div>
+
+                <!-- Macro Breakdown -->
+                <div class="w-full sm:w-1/2 space-y-3">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center">
+                            <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
+                            <span class="text-gray-300 font-medium">Carbs</span>
+                        </div>
+                        <span id="carbValue" class="text-gray-100 font-bold">0g</span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center">
+                            <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
+                            <span class="text-gray-300 font-medium">Protein</span>
+                        </div>
+                        <span id="proteinValue" class="text-gray-100 font-bold">0g</span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center">
+                            <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
+                            <span class="text-gray-300 font-medium">Fat</span>
+                        </div>
+                        <span id="fatValue" class="text-gray-100 font-bold">0g</span>
+                    </div>
+                </div>
+            </div>
+            
+            <p class="mt-6 text-xs text-gray-500 text-center">
+                *Analysis is an AI-powered estimate and should be used for informational purposes only.
+            </p>
+        </div>
+
+        <!-- Refine Analysis Section (Updated to component list) -->
+        <div id="refineSection" class="card p-6 rounded-xl mt-6 hidden">
+            <h2 class="text-xl font-semibold text-gray-200 mb-4 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2 text-blue-400">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 18.07a1.875 1.875 0 01-2.652 0H5.25v-1.25a1.875 1.875 0 011.875-1.875h1.25l7.98-7.98zM21.75 6.75l-2.652-2.652m-13.882-1.332a6.75 6.75 0 10-.645 1.956M12.75 14.25H6.5a1.5 1.5 0 01-1.5-1.5V6.75" />
+                </svg>
+                Refine Estimated Components
+            </h2>
+            
+            <div id="foodComponentList" class="space-y-4 mb-6">
+                <!-- Dynamic food component inputs will be inserted here -->
+            </div>
+
+            <button onclick="recalculateTotalMacros()" id="recalculateButton" class="w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition duration-300">
+                Recalculate Totals
+            </button>
+
+            <p class="mt-4 text-xs text-gray-500">
+                Adjust the food name and/or the weight (grams) for each component and press Recalculate. Changing the food name will trigger a new AI lookup for accuracy.
+            </p>
+        </div>
+        
+    </div>
+    
+    <script>
+        // --- API & UI Setup ---
+        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=`; // API key is handled by the environment
+        const MAX_RETRIES = 3;
+        const INITIAL_BACKOFF = 1000; // 1 second
+
+        let base64Image = null;
+        let lastAnalysisData = null; // Store last good analysis data
+
+        const ui = {
+            imageInput: document.getElementById('imageInput'),
+            uploadLabel: document.getElementById('uploadLabel'),
+            imagePreviewContainer: document.getElementById('imagePreviewContainer'),
+            imagePreview: document.getElementById('imagePreview'),
+            portionContextInput: document.getElementById('portionContextInput'), 
+            analyzeButton: document.getElementById('analyzeButton'),
+            loadingIndicator: document.getElementById('loadingIndicator'),
+            errorMessage: document.getElementById('errorMessage'),
+            resultsCard: document.getElementById('resultsCard'),
+            foodTitle: document.getElementById('foodTitle'),
+            servingInfo: document.getElementById('servingInfo'),
+            calorieCircle: document.getElementById('calorieCircle'),
+            calorieValue: document.getElementById('calorieValue'),
+            carbValue: document.getElementById('carbValue'),
+            proteinValue: document.getElementById('proteinValue'),
+            fatValue: document.getElementById('fatValue'),
+            confidenceIndicator: document.getElementById('confidenceIndicator'), 
+            refineSection: document.getElementById('refineSection'), 
+            foodComponentList: document.getElementById('foodComponentList'), // New component list container
+        };
+        
+        // --- Core Functions ---
+
+        /**
+         * Converts file input to a Base64 string for the API call.
+         * @param {Event} event - The change event from the file input.
+         */
+        function processImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Display preview
+            const reader = new FileReader();
+            reader.onload = () => {
+                ui.imagePreview.src = reader.result;
+                
+                // Extract base64 data (after the comma)
+                base64Image = reader.result.split(',')[1];
+                
+                // Update UI state
+                ui.uploadLabel.classList.add('hidden');
+                ui.imagePreviewContainer.classList.remove('hidden');
+                ui.analyzeButton.disabled = false;
+                ui.resultsCard.classList.add('hidden');
+                ui.refineSection.classList.add('hidden'); 
+                ui.errorMessage.classList.add('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * Starts the macro analysis process (first run with image).
+         */
+        async function startAnalysis() {
+            if (!base64Image) {
+                displayError("Please upload an image of your food first.");
+                return;
+            }
+
+            // Reset UI and show loading
+            ui.analyzeButton.disabled = true;
+            showLoading("Analyzing food... Please wait up to 30 seconds.");
+            ui.resultsCard.classList.add('hidden');
+            ui.refineSection.classList.add('hidden');
+            ui.errorMessage.classList.add('hidden');
+
+            try {
+                const analysisResult = await callGeminiImageMacroAPI(base64Image, ui.imageInput.files[0].type);
+                lastAnalysisData = analysisResult;
+                displayResults(analysisResult);
+            } catch (error) {
+                console.error("Initial analysis failed:", error);
+                displayError(`Failed to get initial analysis. Please try again with a clearer photo. (${error.message || error})`);
+            } finally {
+                hideLoading();
+                ui.analyzeButton.disabled = false;
+            }
+        }
+
+        /**
+         * Helper function to show loading indicator
+         */
+        function showLoading(message) {
+            ui.loadingIndicator.querySelector('p').innerHTML = `
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                ${message}
+            `;
+            ui.loadingIndicator.classList.remove('hidden');
+        }
+
+        /**
+         * Helper function to hide loading indicator
+         */
+        function hideLoading() {
+            ui.loadingIndicator.classList.add('hidden');
+        }
+
+        /**
+         * Generic API call handler with retry logic.
+         */
+        async function fetchWithRetry(payload) {
+            const apiKey = "AIzaSyDiBkxO-v-mXdX0txhRyqnpiJL-SgvTwBg"; 
+            let attempt = 0;
+
+            while (attempt < MAX_RETRIES) {
+                attempt++;
+                try {
+                    const response = await fetch(API_URL + apiKey, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && attempt < MAX_RETRIES) {
+                            const delay = INITIAL_BACKOFF * Math.pow(2, attempt - 1);
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            continue; 
+                        }
+                        throw new Error(`API returned status code: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (!jsonText) {
+                         throw new Error("Model response was empty or incorrectly structured.");
+                    }
+
+                    return JSON.parse(jsonText);
+
+                } catch (e) {
+                    if (attempt === MAX_RETRIES) {
+                        throw e; 
+                    }
+                    const delay = INITIAL_BACKOFF * Math.pow(2, attempt - 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw new Error("Failed to call API after multiple retries.");
+        }
+
+
+        /**
+         * Makes the initial API call to Gemini with the image and a structured request.
+         */
+        async function callGeminiImageMacroAPI(imageData, mimeType) {
+            const portionContext = ui.portionContextInput.value.trim();
+            
+            let userPrompt = "Analyze the image of the food provided. Estimate the total macronutrients (Protein, Carbs, Fat) and Calories for the entire meal. Crucially, break down the meal into its individual components. For each component, provide its estimated weight, calories, and macros (protein, carbs, fat). Provide the output as a JSON object.";
+            if (portionContext) {
+                userPrompt += ` The user provided additional context: "${portionContext}". Please use this context for a more accurate portion estimate.`;
+            }
+            
+            const systemPrompt = "You are an AI Food Analyzer. Your task is to identify and estimate the nutritional content of a meal. You MUST return your analysis as a single JSON object with 'totalMacros' and 'foodItems'.";
+            
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: userPrompt },
+                        {
+                            inlineData: {
+                                mimeType: mimeType,
+                                data: imageData
+                            }
+                        }
+                    ]
+                }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "foodDescription": { "type": "STRING", "description": "A concise description of the main meal." },
+                            "confidenceLevel": { "type": "STRING", "description": "Qualitative assessment of estimation accuracy (High, Moderate, or Low)." },
+                            "totalMacros": {
+                                "type": "OBJECT",
+                                "description": "Initial estimated total macros for the entire meal.",
+                                "properties": {
+                                    "calories": { "type": "NUMBER" },
+                                    "proteinGrams": { "type": "NUMBER" },
+                                    "carbGrams": { "type": "NUMBER" },
+                                    "fatGrams": { "type": "NUMBER" }
+                                }
+                            },
+                            "foodItems": {
+                                "type": "ARRAY",
+                                "description": "List of individual food components in the meal.",
+                                "items": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "foodName": { "type": "STRING", "description": "Name of the component (e.g., 'Grilled Salmon', 'White Rice')." },
+                                        "originalAmountGrams": { "type": "NUMBER", "description": "Estimated weight in grams." },
+                                        "estimatedCalories": { "type": "NUMBER" },
+                                        "estimatedProtein": { "type": "NUMBER" },
+                                        "estimatedCarbs": { "type": "NUMBER" },
+                                        "estimatedFat": { "type": "NUMBER" }
+                                    }
+                                }
+                            }
+                        },
+                        "required": ["foodDescription", "confidenceLevel", "totalMacros", "foodItems"]
+                    }
+                }
+            };
+            return fetchWithRetry(payload);
+        }
+
+        /**
+         * Makes a text-based API call to Gemini to recalculate macros based on a refined list.
+         */
+        async function callGeminiTextMacroAPI(refinedListText) {
+            const userPrompt = `Calculate the total calories and macronutrients (Protein, Carbs, Fat) for the following meal components: ${refinedListText}`;
+            
+            const systemPrompt = "You are a precise nutritional calculator. Given a list of food items and weights, calculate the total macros for the entire meal. You MUST return your analysis as a single JSON object with the 'totalMacros'.";
+            
+            const payload = {
+                contents: [{ parts: [{ text: userPrompt }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "totalMacros": {
+                                "type": "OBJECT",
+                                "description": "Total macros for the entire meal.",
+                                "properties": {
+                                    "calories": { "type": "NUMBER" },
+                                    "proteinGrams": { "type": "NUMBER" },
+                                    "carbGrams": { "type": "NUMBER" },
+                                    "fatGrams": { "type": "NUMBER" }
+                                }
+                            }
+                        },
+                        "required": ["totalMacros"]
+                    }
+                }
+            };
+            
+            const result = await fetchWithRetry(payload);
+            return result.totalMacros;
+        }
+
+        /**
+         * Calculates and updates the display values based on the provided total macro grams.
+         * @param {number} totalProteinGrams 
+         * @param {number} totalCarbGrams 
+         * @param {number} totalFatGrams 
+         */
+        function updateDisplayValues(totalProteinGrams, totalCarbGrams, totalFatGrams) {
+            // Ensure inputs are numbers and non-negative
+            const proteinGrams = Math.max(0, parseFloat(totalProteinGrams) || 0);
+            const carbGrams = Math.max(0, parseFloat(totalCarbGrams) || 0);
+            const fatGrams = Math.max(0, parseFloat(totalFatGrams) || 0);
+
+            const proteinCal = proteinGrams * 4;
+            const carbCal = carbGrams * 4;
+            const fatCal = fatGrams * 9;
+            const totalCal = proteinCal + carbCal + fatCal;
+
+            // Calculate angles for the conic gradient (360 degrees total)
+            const totalMacroCal = totalCal || 1; // Avoid division by zero
+            const carbPercent = (carbCal / totalMacroCal);
+            const proteinPercent = (proteinCal / totalMacroCal);
+            // Fat percent is implicit
+
+            const carbAngle = carbPercent * 360;
+            const proteinAngle = proteinPercent * 360;
+            
+            // Apply the angles to the CSS variables
+            ui.calorieCircle.style.setProperty('--carb-angle', `${carbAngle}deg`);
+            ui.calorieCircle.style.setProperty('--protein-angle', `${carbAngle + proteinAngle}deg`);
+            
+            // Update UI elements
+            ui.calorieValue.textContent = totalCal.toFixed(0);
+            ui.carbValue.textContent = `${carbGrams.toFixed(1)}g`;
+            ui.proteinValue.textContent = `${proteinGrams.toFixed(1)}g`;
+            ui.fatValue.textContent = `${fatGrams.toFixed(1)}g`;
+        }
+        
+        /**
+         * Recalculates the total macros and updates the main display based on user adjustments.
+         */
+        async function recalculateTotalMacros() {
+            const items = ui.foodComponentList.querySelectorAll('.food-item-row');
+            let isNameModified = false;
+            let refinedList = [];
+            
+            // Step 1: Gather current data and check for name changes
+            items.forEach(item => {
+                const nameInput = item.querySelector('.food-name-input');
+                const amountInput = item.querySelector('input[type="number"]');
+
+                const currentName = nameInput.value.trim();
+                const originalName = nameInput.dataset.originalName;
+                const currentAmount = parseFloat(amountInput.value) || 0;
+                
+                if (currentName !== originalName) {
+                    isNameModified = true;
+                }
+                
+                // Read original data from the DOM attributes (now stored with full precision)
+                refinedList.push({
+                    name: currentName,
+                    amount: currentAmount,
+                    originalAmount: parseFloat(item.dataset.originalAmount) || 0,
+                    originalProtein: parseFloat(item.dataset.originalProtein) || 0,
+                    originalCarbs: parseFloat(item.dataset.originalCarbs) || 0,
+                    originalFat: parseFloat(item.dataset.originalFat) || 0,
+                });
+            });
+
+            // Step 2: Decide between local scaling and API re-analysis
+            let newTotalMacros = {};
+
+            if (isNameModified) {
+                // Name changed -> Must use API to get new, accurate macros
+                showLoading("Re-analyzing ingredients... This requires a new AI lookup.");
+                ui.recalculateButton.disabled = true;
+                
+                try {
+                    const refinedListText = refinedList
+                        .map(i => `${i.name} (${i.amount} grams)`)
+                        .join(', ');
+                    
+                    const macroData = await callGeminiTextMacroAPI(refinedListText);
+                    newTotalMacros = macroData;
+                    
+                    // Reset 'original' names in the DOM for subsequent proportional scaling
+                    items.forEach((item, index) => {
+                        item.querySelector('.food-name-input').dataset.originalName = refinedList[index].name;
+                        // Note: Data attributes for macros (originalProtein, etc.) are NOT updated here, 
+                        // as the AI only returns the total, not the new per-item breakdown.
+                        // We rely on proportional scaling from the *original* item breakdown 
+                        // if only amounts change in the future.
+                    });
+
+                } catch (error) {
+                    console.error("Refined analysis failed:", error);
+                    displayError(`Failed to re-analyze based on refined list. Please check ingredient names. (${error.message || error})`);
+                    hideLoading();
+                    ui.recalculateButton.disabled = false;
+                    return;
+                }
+            } else {
+                // Only amounts changed -> Perform local proportional scaling
+                let totalProtein = 0;
+                let totalCarbs = 0;
+                let totalFat = 0;
+
+                refinedList.forEach(item => {
+                    if (item.originalAmount > 0) {
+                        const scale = item.amount / item.originalAmount;
+                        totalProtein += item.originalProtein * scale;
+                        totalCarbs += item.originalCarbs * scale;
+                        totalFat += item.originalFat * scale;
+                    }
+                });
+                
+                newTotalMacros = {
+                    proteinGrams: totalProtein,
+                    carbGrams: totalCarbs,
+                    fatGrams: totalFat
+                };
+            }
+            
+            // Step 3: Update display and provide feedback
+            updateDisplayValues(newTotalMacros.proteinGrams, newTotalMacros.carbGrams, newTotalMacros.fatGrams);
+            
+            const totalGrams = refinedList.reduce((sum, item) => sum + item.amount, 0);
+            ui.servingInfo.textContent = `Estimated Meal Weight: ${totalGrams.toFixed(0)}g`;
+
+            // Visual feedback
+            const recalculateButton = document.getElementById('recalculateButton');
+            recalculateButton.textContent = 'Recalculated!';
+            setTimeout(() => {
+                recalculateButton.textContent = 'Recalculate Totals';
+            }, 1000);
+
+            hideLoading();
+            ui.recalculateButton.disabled = false;
+        }
+
+        /**
+         * Builds the dynamic list of food components for refinement.
+         */
+        function buildComponentList(foodItems) {
+            ui.foodComponentList.innerHTML = ''; // Clear existing list
+            
+            foodItems.forEach((item, index) => {
+                const componentDiv = document.createElement('div');
+                componentDiv.classList.add('flex', 'justify-between', 'items-center', 'py-2', 'border-b', 'border-gray-700', 'food-item-row');
+                
+                // Store original data with full precision (using toString() instead of toFixed(1))
+                componentDiv.dataset.originalAmount = item.originalAmountGrams.toString();
+                componentDiv.dataset.originalProtein = item.estimatedProtein.toString();
+                componentDiv.dataset.originalCarbs = item.estimatedCarbs.toString();
+                componentDiv.dataset.originalFat = item.estimatedFat.toString();
+
+                componentDiv.innerHTML = `
+                    <div class="w-3/5 pr-2">
+                        <input type="text" 
+                            value="${item.foodName}"
+                            data-original-name="${item.foodName}"
+                            class="food-name-input w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded-lg text-gray-100 text-sm focus:ring-blue-500 focus:border-blue-500 truncate"
+                            title="Edit food name"
+                        />
+                    </div>
+                    <div class="w-2/5 flex items-center">
+                        <input type="number" 
+                            id="item-${index}"
+                            min="0" step="1" 
+                            value="${item.originalAmountGrams.toFixed(0)}" 
+                            placeholder="g"
+                            class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded-lg text-gray-100 text-center text-sm focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <span class="ml-1 text-xs text-gray-400">g</span>
+                    </div>
+                `;
+                ui.foodComponentList.appendChild(componentDiv);
+            });
+        }
+
+        /**
+         * Displays the nutrient results in the dedicated card and initializes the refine section.
+         * @param {object} data - The parsed JSON data from the Gemini model.
+         */
+        function displayResults(data) {
+            const totalMacros = data.totalMacros;
+
+            // Check for valid data structure
+            if (!totalMacros || !data.foodItems || !data.confidenceLevel) {
+                displayError("Analysis data is incomplete. The model may not have been able to identify the components. Please try again with a clearer photo.");
+                return;
+            }
+            
+            // --- 1. Main Results Card Update ---
+            ui.foodTitle.textContent = data.foodDescription;
+            // The total serving size is now the sum of all components
+            const totalGrams = data.foodItems.reduce((sum, item) => sum + item.originalAmountGrams, 0);
+            ui.servingInfo.textContent = `Estimated Meal Weight: ${totalGrams.toFixed(0)}g`;
+            ui.confidenceIndicator.textContent = data.confidenceLevel;
+
+            // Update main display based on AI's initial total data
+            updateDisplayValues(totalMacros.proteinGrams, totalMacros.carbGrams, totalMacros.fatGrams);
+
+            ui.resultsCard.classList.remove('hidden');
+            
+            // --- 2. Refine Section Initialization ---
+            buildComponentList(data.foodItems);
+            ui.refineSection.classList.remove('hidden');
+        }
+
+        /**
+         * Displays a temporary error message.
+         * @param {string} message - The error message to display.
+         */
+        function displayError(message) {
+            ui.errorMessage.textContent = message;
+            ui.errorMessage.classList.remove('hidden');
+        }
+        
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialization logic remains simple
+        });
+    </script>
+</body>
+</html>
+
+
