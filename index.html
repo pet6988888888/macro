@@ -3,696 +3,479 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Food Macro Analyzer</title>
-    <!-- Load Tailwind CSS -->
+    <title>AI Meal Macro Analyzer</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Firebase/Firestore SDKs for setup variables (even if not used for persistence) -->
     <script type="module">
-        // Basic Firebase imports needed to satisfy the environment requirements, 
-        // even though no persistence operations are being executed per user request.
+        // Import Firebase modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global variables provided by the environment (required for existence check)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-
-        if (Object.keys(firebaseConfig).length > 0) {
-            const app = initializeApp(firebaseConfig);
-            const db = getFirestore(app);
-            const auth = getAuth(app);
-            // Sign in to establish a user context, necessary for the overall environment.
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error("Custom token sign-in failed:", e));
-            } else {
-                signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed:", e));
+        // Tailwind Configuration
+        tailwind.config = {
+            darkMode: 'class', // Enable dark mode using 'dark' class on parent element (body)
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-green': '#00B894',
+                        'accent-blue': '#4c7cff', // Custom blue for calories/card contrast
+                        'dark-bg': '#1e293b',
+                        'card-bg-dark': '#1f2937', // Gray 800
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
             }
         }
-    </script>
-    <!-- Use Inter font family -->
-    <style>
-        /* Permanent Dark Mode Styles for high contrast */
-        :root {
-            --bg-color: #111827; /* Darkest background (Gray 900) */
-            --text-color: #f3f4f6; /* Very light text (Gray 100) */
-            --card-bg: #1f2937; /* Slightly lighter dark card (Gray 800) */
-            --card-shadow: 0 10px 15px -3px rgba(255, 255, 255, 0.08), 0 4px 6px -2px rgba(255, 255, 255, 0.04);
-            --placeholder-bg: #374151; /* Dark gray for progress circle background */
-            --subtle-text: #9ca3af; /* Gray 400 for descriptions */
+
+        // --- Firebase Initialization and Auth ---
+        let db;
+        let auth;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (firebaseConfig) {
+            setLogLevel('debug'); // Enable Firestore logging for debugging
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Simple sign-in
+            onAuthStateChanged(auth, async (user) => {
+                if (!user) {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                    }
+                }
+            });
+        } else {
+            console.error("Firebase config is missing. Authentication and database features are disabled.");
         }
-        
-        /* Apply CSS variables globally */
-        body { 
-            font-family: 'Inter', sans-serif; 
-            background-color: var(--bg-color); 
-            color: var(--text-color);
+        // --- End Firebase Init ---
+
+        // Global variables
+        let selectedFileBase64 = null;
+        let selectedFileMimeType = null; 
+        const API_KEY = ""; // Key is handled by the Canvas environment
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+        const MAX_RETRIES = 5;
+
+        // --- Theme Toggle Logic ---
+        let currentTheme = localStorage.getItem('theme') || 'light';
+
+        function setTheme(theme) {
+            currentTheme = theme;
+            localStorage.setItem('theme', theme);
+            const body = document.body;
+            
+            if (theme === 'dark') {
+                body.classList.add('dark');
+                body.style.backgroundColor = '#1e293b'; 
+            } else {
+                body.classList.remove('dark');
+                body.style.backgroundColor = '#f1f5f9';
+            }
+
+            // Update the icon to reflect the current theme
+            const themeIcon = document.getElementById('theme-icon');
+            if (themeIcon) {
+                if (theme === 'dark') {
+                    // Sun icon (Light mode)
+                    themeIcon.innerHTML = `<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 10a4 4 0 11-8 0 4 4 0 018 0zm-.87-5.13a1 1 0 010 1.41l-.71.71a1 1 0 01-1.41-1.41l.71-.71a1 1 0 011.41 0zM5 12a1 1 0 100-2H4a1 1 0 100 2h1zm7.71 4.29a1 1 0 01-1.41 0l-.71-.71a1 1 0 011.41-1.41l.71.71a1 1 0 010 1.41zM2 12a1 1 0 110-2h1a1 1 0 110 2H2zm10.71 4.29a1 1 0 01-1.41 0l-.71-.71a1 1 0 011.41-1.41l.71.71a1 1 0 010 1.41zM16 12a1 1 0 110-2h1a1 1 0 110 2h-1zM5.71 4.29a1 1 0 011.41 0l.71.71a1 1 0 01-1.41 1.41l-.71-.71a1 1 0 010-1.41zM10 17a1 1 0 110 2 1 1 0 010-2z" fill-rule="evenodd" clip-rule="evenodd"></path></svg>`;
+                } else {
+                    // Moon icon (Dark mode)
+                    themeIcon.innerHTML = `<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"></path></svg>`;
+                }
+            }
         }
-        .card { 
-            background-color: var(--card-bg);
-            box-shadow: var(--card-shadow); 
-        }
-        .progress-circle {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            background: conic-gradient(
-                #ef4444 var(--carb-angle),
-                #3b82f6 0 var(--protein-angle),
-                #22c55e 0 var(--fat-angle),
-                var(--placeholder-bg) 0
-            );
-        }
-    </style>
-</head>
-<body class="min-h-screen flex items-start justify-center p-4 sm:p-8">
 
-    <div class="w-full max-w-lg">
-        
-        <!-- Header with Title -->
-        <header class="flex justify-center items-center mb-4">
-            <h1 class="text-3xl font-extrabold text-center text-gray-100">
-                <span class="text-blue-500">Macro</span>Scan
-            </h1>
-        </header>
-
-        <!-- Description -->
-        <p class="text-center text-sm text-gray-400 mb-8">
-            Upload a clear photo of your meal below. Our AI will analyze the contents and provide an estimate of calories and macronutrients (Protein, Carbs, Fat) for the entire meal.
-        </p>
-
-        <!-- Input Card -->
-        <div class="card p-6 rounded-xl mb-6">
-            <h2 class="text-xl font-semibold text-gray-200 mb-4">Analyze Your Meal</h2>
-            
-            <input type="file" id="imageInput" accept="image/*" class="hidden" onchange="processImage(event)">
-            
-            <label for="imageInput" id="uploadLabel" class="flex flex-col items-center justify-center p-6 border-2 border-dashed border-blue-600 rounded-lg cursor-pointer bg-gray-900/30 hover:bg-gray-700/50 transition duration-300">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-blue-400 mb-2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                </svg>
-                <span class="text-lg font-medium text-blue-400">Tap to Upload Photo</span>
-                <span class="text-sm text-gray-500 mt-1">or use your camera to capture food</span>
-            </label>
-
-            <!-- Image Preview Area -->
-            <div id="imagePreviewContainer" class="hidden mt-4">
-                <p class="text-sm font-medium text-gray-300 mb-2">Image Preview:</p>
-                <img id="imagePreview" class="w-full h-40 object-cover rounded-lg mb-4 shadow-inner" alt="Food preview">
-                
-                <!-- Portion Context Input (Suggestion 1) -->
-                <label for="portionContextInput" class="block text-sm font-medium text-gray-300 mt-2 mb-1">Portion/Context (e.g., 'With a fork for scale', 'Half a chicken breast'):</label>
-                <input type="text" id="portionContextInput" placeholder="Optional: Describe size or reference object" class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:ring-blue-500 focus:border-blue-500 transition duration-150">
-
-                <button onclick="document.getElementById('imageInput').click()" class="w-full py-2 bg-gray-600 text-gray-200 rounded-lg font-semibold hover:bg-gray-500 transition duration-300 mb-2 mt-4">Change Image</button>
-                <button onclick="startAnalysis()" id="analyzeButton" class="w-full py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition duration-300 disabled:opacity-50" disabled>
-                    Analyze Macros
-                </button>
-            </div>
-
-            <!-- Loading Indicator -->
-            <div id="loadingIndicator" class="hidden mt-4 p-4 text-center bg-blue-900 text-blue-200 rounded-lg">
-                <p class="font-semibold flex items-center justify-center">
-                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    Analyzing food... Please wait up to 30 seconds.
-                </p>
-            </div>
-
-            <!-- Error Message -->
-            <div id="errorMessage" class="hidden mt-4 p-4 bg-red-900 text-red-200 rounded-lg font-medium"></div>
-
-        </div>
-
-        <!-- Results Card (Hidden initially) -->
-        <div id="resultsCard" class="card p-6 rounded-xl hidden">
-            <h2 class="text-2xl font-bold text-gray-100 mb-1" id="foodTitle"></h2>
-            <p class="text-sm text-gray-400 mb-4" id="servingInfo"></p>
-            
-            <!-- Confidence Display -->
-            <div class="flex items-center mb-6">
-                <span class="text-xs font-semibold uppercase tracking-wider mr-2 text-gray-400">Confidence:</span>
-                <span id="confidenceIndicator" class="font-bold text-sm text-yellow-400"></span>
-            </div>
-
-            <div class="flex flex-col sm:flex-row items-center justify-between">
-                
-                <!-- Calorie Circle -->
-                <div class="flex flex-col items-center mb-6 sm:mb-0">
-                    <div id="calorieCircle" class="progress-circle flex items-center justify-center text-center font-bold text-lg p-2 relative">
-                        <div class="absolute w-full h-full rounded-full bg-gray-800 flex items-center justify-center">
-                            <span id="calorieValue" class="text-3xl font-extrabold text-green-500">0</span>
-                        </div>
-                    </div>
-                    <span class="mt-2 text-md font-medium text-gray-400">Total Calories (kcal)</span>
-                </div>
-
-                <!-- Macro Breakdown -->
-                <div class="w-full sm:w-1/2 space-y-3">
-                    <div class="flex justify-between items-center">
-                        <div class="flex items-center">
-                            <span class="w-3 h-3 rounded-full bg-red-500 mr-2"></span>
-                            <span class="text-gray-300 font-medium">Carbs</span>
-                        </div>
-                        <span id="carbValue" class="text-gray-100 font-bold">0g</span>
-                    </div>
-                    
-                    <div class="flex justify-between items-center">
-                        <div class="flex items-center">
-                            <span class="w-3 h-3 rounded-full bg-blue-500 mr-2"></span>
-                            <span class="text-gray-300 font-medium">Protein</span>
-                        </div>
-                        <span id="proteinValue" class="text-gray-100 font-bold">0g</span>
-                    </div>
-                    
-                    <div class="flex justify-between items-center">
-                        <div class="flex items-center">
-                            <span class="w-3 h-3 rounded-full bg-green-500 mr-2"></span>
-                            <span class="text-gray-300 font-medium">Fat</span>
-                        </div>
-                        <span id="fatValue" class="text-gray-100 font-bold">0g</span>
-                    </div>
-                </div>
-            </div>
-            
-            <p class="mt-6 text-xs text-gray-500 text-center">
-                *Analysis is an AI-powered estimate and should be used for informational purposes only.
-            </p>
-        </div>
-
-        <!-- Refine Analysis Section (Updated to component list) -->
-        <div id="refineSection" class="card p-6 rounded-xl mt-6 hidden">
-            <h2 class="text-xl font-semibold text-gray-200 mb-4 flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5 mr-2 text-blue-400">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 18.07a1.875 1.875 0 01-2.652 0H5.25v-1.25a1.875 1.875 0 011.875-1.875h1.25l7.98-7.98zM21.75 6.75l-2.652-2.652m-13.882-1.332a6.75 6.75 0 10-.645 1.956M12.75 14.25H6.5a1.5 1.5 0 01-1.5-1.5V6.75" />
-                </svg>
-                Refine Estimated Components
-            </h2>
-            
-            <div id="foodComponentList" class="space-y-4 mb-6">
-                <!-- Dynamic food component inputs will be inserted here -->
-            </div>
-
-            <button onclick="recalculateTotalMacros()" id="recalculateButton" class="w-full py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 transition duration-300">
-                Recalculate Totals
-            </button>
-
-            <p class="mt-4 text-xs text-gray-500">
-                Adjust the food name and/or the weight (grams) for each component and press Recalculate. Changing the food name will trigger a new AI lookup for accuracy.
-            </p>
-        </div>
-        
-    </div>
-    
-    <script>
-        // --- API & UI Setup ---
-        const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=`; // API key is handled by the environment
-        const MAX_RETRIES = 3;
-        const INITIAL_BACKOFF = 1000; // 1 second
-
-        let base64Image = null;
-        let lastAnalysisData = null; // Store last good analysis data
-
-        const ui = {
-            imageInput: document.getElementById('imageInput'),
-            uploadLabel: document.getElementById('uploadLabel'),
-            imagePreviewContainer: document.getElementById('imagePreviewContainer'),
-            imagePreview: document.getElementById('imagePreview'),
-            portionContextInput: document.getElementById('portionContextInput'), 
-            analyzeButton: document.getElementById('analyzeButton'),
-            loadingIndicator: document.getElementById('loadingIndicator'),
-            errorMessage: document.getElementById('errorMessage'),
-            resultsCard: document.getElementById('resultsCard'),
-            foodTitle: document.getElementById('foodTitle'),
-            servingInfo: document.getElementById('servingInfo'),
-            calorieCircle: document.getElementById('calorieCircle'),
-            calorieValue: document.getElementById('calorieValue'),
-            carbValue: document.getElementById('carbValue'),
-            proteinValue: document.getElementById('proteinValue'),
-            fatValue: document.getElementById('fatValue'),
-            confidenceIndicator: document.getElementById('confidenceIndicator'), 
-            refineSection: document.getElementById('refineSection'), 
-            foodComponentList: document.getElementById('foodComponentList'), // New component list container
+        window.toggleTheme = () => {
+            setTheme(currentTheme === 'light' ? 'dark' : 'light');
         };
-        
-        // --- Core Functions ---
+
+        // Apply initial theme on load
+        window.addEventListener('DOMContentLoaded', () => {
+            setTheme(currentTheme);
+        });
+        // --- End Theme Toggle Logic ---
+
+        // --- Utility Functions ---
 
         /**
-         * Converts file input to a Base64 string for the API call.
-         * @param {Event} event - The change event from the file input.
+         * Converts a File object to a base64 string for the API.
          */
-        function processImage(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            // Display preview
-            const reader = new FileReader();
-            reader.onload = () => {
-                ui.imagePreview.src = reader.result;
-                
-                // Extract base64 data (after the comma)
-                base64Image = reader.result.split(',')[1];
-                
-                // Update UI state
-                ui.uploadLabel.classList.add('hidden');
-                ui.imagePreviewContainer.classList.remove('hidden');
-                ui.analyzeButton.disabled = false;
-                ui.resultsCard.classList.add('hidden');
-                ui.refineSection.classList.add('hidden'); 
-                ui.errorMessage.classList.add('hidden');
-            };
-            reader.readAsDataURL(file);
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => resolve(reader.result.split(',')[1]); // Only need the base64 part
+                reader.onerror = error => reject(error);
+            });
         }
 
         /**
-         * Starts the macro analysis process (first run with image).
+         * Handles exponential backoff for API retries.
          */
-        async function startAnalysis() {
-            if (!base64Image) {
-                displayError("Please upload an image of your food first.");
+        function delay(attempt) {
+            const ms = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        /**
+         * Shows a message box in the UI.
+         */
+        function showMessage(message, isError = false) {
+            const messageBox = document.getElementById('message-box');
+            messageBox.textContent = message;
+            messageBox.className = `p-3 mt-4 rounded-lg text-sm text-center ${isError ? 'bg-red-600 text-white' : 'bg-primary-green text-white'}`;
+            messageBox.classList.remove('hidden');
+        }
+
+        function hideMessage() {
+            document.getElementById('message-box').classList.add('hidden');
+        }
+
+        // --- UI Handlers ---
+
+        /**
+         * Handles the file input change event.
+         * Displays the image and prepares the base64 data.
+         */
+        window.handleFileSelect = async (event) => {
+            hideMessage();
+            const file = event.target.files[0];
+            const preview = document.getElementById('image-preview');
+            const analyzeButton = document.getElementById('analyze-button');
+
+            if (file) {
+                if (!file.type.startsWith('image/')) {
+                    showMessage("Please select an image file (JPEG, PNG, etc.).", true);
+                    analyzeButton.disabled = true;
+                    preview.src = "";
+                    preview.classList.add('hidden');
+                    return;
+                }
+
+                try {
+                    // Preview the image
+                    preview.src = URL.createObjectURL(file);
+                    preview.classList.remove('hidden');
+                    
+                    // Store MIME type
+                    selectedFileMimeType = file.type;
+
+                    // Convert to base64 for API
+                    selectedFileBase64 = await fileToBase64(file);
+                    analyzeButton.disabled = false;
+                    document.getElementById('results-container').classList.add('hidden'); // Hide old results
+
+                } catch (error) {
+                    console.error("Error processing file:", error);
+                    showMessage("Could not process image file.", true);
+                    analyzeButton.disabled = true;
+                }
+            } else {
+                preview.src = "";
+                preview.classList.add('hidden');
+                analyzeButton.disabled = true;
+                selectedFileBase64 = null;
+                selectedFileMimeType = null;
+            }
+        };
+
+        /**
+         * Triggers the AI analysis of the meal photo.
+         */
+        window.analyzeMeal = async () => {
+            if (!selectedFileBase64 || !selectedFileMimeType) {
+                showMessage("Please select a meal photo first.", true);
                 return;
             }
 
-            // Reset UI and show loading
-            ui.analyzeButton.disabled = true;
-            showLoading("Analyzing food... Please wait up to 30 seconds.");
-            ui.resultsCard.classList.add('hidden');
-            ui.refineSection.classList.add('hidden');
-            ui.errorMessage.classList.add('hidden');
+            const analyzeButton = document.getElementById('analyze-button');
+            const spinner = document.getElementById('loading-spinner');
+            const resultsContainer = document.getElementById('results-container');
+            const refinementText = document.getElementById('refinement-input').value.trim();
 
-            try {
-                const analysisResult = await callGeminiImageMacroAPI(base64Image, ui.imageInput.files[0].type);
-                lastAnalysisData = analysisResult;
-                displayResults(analysisResult);
-            } catch (error) {
-                console.error("Initial analysis failed:", error);
-                displayError(`Failed to get initial analysis. Please try again with a clearer photo. (${error.message || error})`);
-            } finally {
-                hideLoading();
-                ui.analyzeButton.disabled = false;
+            analyzeButton.disabled = true;
+            spinner.classList.remove('hidden');
+            resultsContainer.classList.add('hidden');
+            hideMessage();
+            
+            // Define the instruction and structured output schema
+            let prompt = `Analyze this image of a meal. Identify the main ingredients and estimate the serving size. Based on your analysis, provide the total estimated Calories, grams of Protein, grams of Carbohydrates (Carbs), and grams of Fat for the entire visible meal. Provide a brief, encouraging "Daily Insight" (around 10-15 words).`;
+
+            if (refinementText) {
+                // If refinement text is provided, instruct the model to use it.
+                prompt = `Analyze this image of a meal. For the analysis, use the following additional information: "${refinementText}". Identify the main ingredients and estimate the serving size. Based on your analysis, provide the total estimated Calories, grams of Protein, grams of Carbohydrates (Carbs), and grams of Fat for the entire visible meal. Provide a brief, encouraging "Daily Insight" (around 10-15 words). The analysis should be based on the image, refined by the provided text.`;
+            } else {
+                // Default prompt if no refinement text is provided.
+                prompt += ` The analysis should be based solely on the image.`;
             }
-        }
 
-        /**
-         * Helper function to show loading indicator
-         */
-        function showLoading(message) {
-            ui.loadingIndicator.querySelector('p').innerHTML = `
-                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                ${message}
-            `;
-            ui.loadingIndicator.classList.remove('hidden');
-        }
+            const payload = {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: prompt },
+                        {
+                            inlineData: {
+                                mimeType: selectedFileMimeType, // Use actual MIME type
+                                data: selectedFileBase64
+                            }
+                        }
+                    ]
+                }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "calories": { "type": "NUMBER", "description": "Total estimated Calories (kcal) for the meal." },
+                            "protein_grams": { "type": "NUMBER", "description": "Total estimated Protein in grams." },
+                            "carbs_grams": { "type": "NUMBER", "description": "Total estimated Carbohydrates in grams." },
+                            "fat_grams": { "type": "NUMBER", "description": "Total estimated Fat in grams." },
+                            "insight": { "type": "STRING", "description": "A brief, encouraging daily insight/tip related to the meal." },
+                            "identified_items": { "type": "STRING", "description": "A list of identified food items and estimated serving sizes, e.g., 'Grilled Chicken Breast (4oz), Quinoa (1 cup), Asparagus (5 spears), 4 Cherry Tomatoes, 1/4 Avocado.'" }
+                        },
+                        required: ["calories", "protein_grams", "carbs_grams", "fat_grams", "insight", "identified_items"]
+                    }
+                }
+            };
 
-        /**
-         * Helper function to hide loading indicator
-         */
-        function hideLoading() {
-            ui.loadingIndicator.classList.add('hidden');
-        }
-
-        /**
-         * Generic API call handler with retry logic.
-         */
-        async function fetchWithRetry(payload) {
-            const apiKey = "AIzaSyAvu75RSEfSMoP-ZatsXptge4T3YbsSQHg"; 
-            let attempt = 0;
-
-            while (attempt < MAX_RETRIES) {
-                attempt++;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    const response = await fetch(API_URL + apiKey, {
+                    const response = await fetch(API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
 
                     if (!response.ok) {
-                        if (response.status === 429 && attempt < MAX_RETRIES) {
-                            const delay = INITIAL_BACKOFF * Math.pow(2, attempt - 1);
-                            await new Promise(resolve => setTimeout(resolve, delay));
-                            continue; 
+                         if (response.status === 429 && attempt < MAX_RETRIES - 1) {
+                            await delay(attempt);
+                            continue;
                         }
-                        throw new Error(`API returned status code: ${response.status}`);
+                        const errorBody = await response.json();
+                        throw new Error(`API Request failed with status ${response.status}: ${JSON.stringify(errorBody)}`);
                     }
 
                     const result = await response.json();
                     const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
 
                     if (!jsonText) {
-                         throw new Error("Model response was empty or incorrectly structured.");
+                        throw new Error("Received empty or malformed response from AI model.");
                     }
 
-                    return JSON.parse(jsonText);
-
-                } catch (e) {
-                    if (attempt === MAX_RETRIES) {
-                        throw e; 
-                    }
-                    const delay = INITIAL_BACKOFF * Math.pow(2, attempt - 1);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
-            }
-            throw new Error("Failed to call API after multiple retries.");
-        }
-
-
-        /**
-         * Makes the initial API call to Gemini with the image and a structured request.
-         */
-        async function callGeminiImageMacroAPI(imageData, mimeType) {
-            const portionContext = ui.portionContextInput.value.trim();
-            
-            let userPrompt = "Analyze the image of the food provided. Estimate the total macronutrients (Protein, Carbs, Fat) and Calories for the entire meal. Crucially, break down the meal into its individual components. For each component, provide its estimated weight, calories, and macros (protein, carbs, fat). Provide the output as a JSON object.";
-            if (portionContext) {
-                userPrompt += ` The user provided additional context: "${portionContext}". Please use this context for a more accurate portion estimate.`;
-            }
-            
-            const systemPrompt = "You are an AI Food Analyzer. Your task is to identify and estimate the nutritional content of a meal. You MUST return your analysis as a single JSON object with 'totalMacros' and 'foodItems'.";
-            
-            const payload = {
-                contents: [{
-                    role: "user",
-                    parts: [
-                        { text: userPrompt },
-                        {
-                            inlineData: {
-                                mimeType: mimeType,
-                                data: imageData
-                            }
-                        }
-                    ]
-                }],
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "OBJECT",
-                        properties: {
-                            "foodDescription": { "type": "STRING", "description": "A concise description of the main meal." },
-                            "confidenceLevel": { "type": "STRING", "description": "Qualitative assessment of estimation accuracy (High, Moderate, or Low)." },
-                            "totalMacros": {
-                                "type": "OBJECT",
-                                "description": "Initial estimated total macros for the entire meal.",
-                                "properties": {
-                                    "calories": { "type": "NUMBER" },
-                                    "proteinGrams": { "type": "NUMBER" },
-                                    "carbGrams": { "type": "NUMBER" },
-                                    "fatGrams": { "type": "NUMBER" }
-                                }
-                            },
-                            "foodItems": {
-                                "type": "ARRAY",
-                                "description": "List of individual food components in the meal.",
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "foodName": { "type": "STRING", "description": "Name of the component (e.g., 'Grilled Salmon', 'White Rice')." },
-                                        "originalAmountGrams": { "type": "NUMBER", "description": "Estimated weight in grams." },
-                                        "estimatedCalories": { "type": "NUMBER" },
-                                        "estimatedProtein": { "type": "NUMBER" },
-                                        "estimatedCarbs": { "type": "NUMBER" },
-                                        "estimatedFat": { "type": "NUMBER" }
-                                    }
-                                }
-                            }
-                        },
-                        "required": ["foodDescription", "confidenceLevel", "totalMacros", "foodItems"]
-                    }
-                }
-            };
-            return fetchWithRetry(payload);
-        }
-
-        /**
-         * Makes a text-based API call to Gemini to recalculate macros based on a refined list.
-         */
-        async function callGeminiTextMacroAPI(refinedListText) {
-            const userPrompt = `Calculate the total calories and macronutrients (Protein, Carbs, Fat) for the following meal components: ${refinedListText}`;
-            
-            const systemPrompt = "You are a precise nutritional calculator. Given a list of food items and weights, calculate the total macros for the entire meal. You MUST return your analysis as a single JSON object with the 'totalMacros'.";
-            
-            const payload = {
-                contents: [{ parts: [{ text: userPrompt }] }],
-                systemInstruction: { parts: [{ text: systemPrompt }] },
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "OBJECT",
-                        properties: {
-                            "totalMacros": {
-                                "type": "OBJECT",
-                                "description": "Total macros for the entire meal.",
-                                "properties": {
-                                    "calories": { "type": "NUMBER" },
-                                    "proteinGrams": { "type": "NUMBER" },
-                                    "carbGrams": { "type": "NUMBER" },
-                                    "fatGrams": { "type": "NUMBER" }
-                                }
-                            }
-                        },
-                        "required": ["totalMacros"]
-                    }
-                }
-            };
-            
-            const result = await fetchWithRetry(payload);
-            return result.totalMacros;
-        }
-
-        /**
-         * Calculates and updates the display values based on the provided total macro grams.
-         * @param {number} totalProteinGrams 
-         * @param {number} totalCarbGrams 
-         * @param {number} totalFatGrams 
-         */
-        function updateDisplayValues(totalProteinGrams, totalCarbGrams, totalFatGrams) {
-            // Ensure inputs are numbers and non-negative
-            const proteinGrams = Math.max(0, parseFloat(totalProteinGrams) || 0);
-            const carbGrams = Math.max(0, parseFloat(totalCarbGrams) || 0);
-            const fatGrams = Math.max(0, parseFloat(totalFatGrams) || 0);
-
-            const proteinCal = proteinGrams * 4;
-            const carbCal = carbGrams * 4;
-            const fatCal = fatGrams * 9;
-            const totalCal = proteinCal + carbCal + fatCal;
-
-            // Calculate angles for the conic gradient (360 degrees total)
-            const totalMacroCal = totalCal || 1; // Avoid division by zero
-            const carbPercent = (carbCal / totalMacroCal);
-            const proteinPercent = (proteinCal / totalMacroCal);
-            // Fat percent is implicit
-
-            const carbAngle = carbPercent * 360;
-            const proteinAngle = proteinPercent * 360;
-            
-            // Apply the angles to the CSS variables
-            ui.calorieCircle.style.setProperty('--carb-angle', `${carbAngle}deg`);
-            ui.calorieCircle.style.setProperty('--protein-angle', `${carbAngle + proteinAngle}deg`);
-            
-            // Update UI elements
-            ui.calorieValue.textContent = totalCal.toFixed(0);
-            ui.carbValue.textContent = `${carbGrams.toFixed(1)}g`;
-            ui.proteinValue.textContent = `${proteinGrams.toFixed(1)}g`;
-            ui.fatValue.textContent = `${fatGrams.toFixed(1)}g`;
-        }
-        
-        /**
-         * Recalculates the total macros and updates the main display based on user adjustments.
-         */
-        async function recalculateTotalMacros() {
-            const items = ui.foodComponentList.querySelectorAll('.food-item-row');
-            let isNameModified = false;
-            let refinedList = [];
-            
-            // Step 1: Gather current data and check for name changes
-            items.forEach(item => {
-                const nameInput = item.querySelector('.food-name-input');
-                const amountInput = item.querySelector('input[type="number"]');
-
-                const currentName = nameInput.value.trim();
-                const originalName = nameInput.dataset.originalName;
-                const currentAmount = parseFloat(amountInput.value) || 0;
-                
-                if (currentName !== originalName) {
-                    isNameModified = true;
-                }
-                
-                // Read original data from the DOM attributes (now stored with full precision)
-                refinedList.push({
-                    name: currentName,
-                    amount: currentAmount,
-                    originalAmount: parseFloat(item.dataset.originalAmount) || 0,
-                    originalProtein: parseFloat(item.dataset.originalProtein) || 0,
-                    originalCarbs: parseFloat(item.dataset.originalCarbs) || 0,
-                    originalFat: parseFloat(item.dataset.originalFat) || 0,
-                });
-            });
-
-            // Step 2: Decide between local scaling and API re-analysis
-            let newTotalMacros = {};
-
-            if (isNameModified) {
-                // Name changed -> Must use API to get new, accurate macros
-                showLoading("Re-analyzing ingredients... This requires a new AI lookup.");
-                ui.recalculateButton.disabled = true;
-                
-                try {
-                    const refinedListText = refinedList
-                        .map(i => `${i.name} (${i.amount} grams)`)
-                        .join(', ');
-                    
-                    const macroData = await callGeminiTextMacroAPI(refinedListText);
-                    newTotalMacros = macroData;
-                    
-                    // Reset 'original' names in the DOM for subsequent proportional scaling
-                    items.forEach((item, index) => {
-                        item.querySelector('.food-name-input').dataset.originalName = refinedList[index].name;
-                        // Note: Data attributes for macros (originalProtein, etc.) are NOT updated here, 
-                        // as the AI only returns the total, not the new per-item breakdown.
-                        // We rely on proportional scaling from the *original* item breakdown 
-                        // if only amounts change in the future.
-                    });
+                    const macroData = JSON.parse(jsonText);
+                    displayResults(macroData);
+                    break; // Success, exit retry loop
 
                 } catch (error) {
-                    console.error("Refined analysis failed:", error);
-                    displayError(`Failed to re-analyze based on refined list. Please check ingredient names. (${error.message || error})`);
-                    hideLoading();
-                    ui.recalculateButton.disabled = false;
-                    return;
-                }
-            } else {
-                // Only amounts changed -> Perform local proportional scaling
-                let totalProtein = 0;
-                let totalCarbs = 0;
-                let totalFat = 0;
-
-                refinedList.forEach(item => {
-                    if (item.originalAmount > 0) {
-                        const scale = item.amount / item.originalAmount;
-                        totalProtein += item.originalProtein * scale;
-                        totalCarbs += item.originalCarbs * scale;
-                        totalFat += item.originalFat * scale;
+                    console.error(`Attempt ${attempt + 1} failed:`, error);
+                    if (attempt === MAX_RETRIES - 1) {
+                        showMessage("AI analysis failed after multiple retries. Please try a different photo or check the console for details.", true);
+                    } else {
+                        await delay(attempt);
                     }
-                });
-                
-                newTotalMacros = {
-                    proteinGrams: totalProtein,
-                    carbGrams: totalCarbs,
-                    fatGrams: totalFat
-                };
+                }
             }
-            
-            // Step 3: Update display and provide feedback
-            updateDisplayValues(newTotalMacros.proteinGrams, newTotalMacros.carbGrams, newTotalMacros.fatGrams);
-            
-            const totalGrams = refinedList.reduce((sum, item) => sum + item.amount, 0);
-            ui.servingInfo.textContent = `Estimated Meal Weight: ${totalGrams.toFixed(0)}g`;
 
-            // Visual feedback
-            const recalculateButton = document.getElementById('recalculateButton');
-            recalculateButton.textContent = 'Recalculated!';
-            setTimeout(() => {
-                recalculateButton.textContent = 'Recalculate Totals';
-            }, 1000);
-
-            hideLoading();
-            ui.recalculateButton.disabled = false;
-        }
+            analyzeButton.disabled = false;
+            spinner.classList.add('hidden');
+        };
 
         /**
-         * Builds the dynamic list of food components for refinement.
-         */
-        function buildComponentList(foodItems) {
-            ui.foodComponentList.innerHTML = ''; // Clear existing list
-            
-            foodItems.forEach((item, index) => {
-                const componentDiv = document.createElement('div');
-                componentDiv.classList.add('flex', 'justify-between', 'items-center', 'py-2', 'border-b', 'border-gray-700', 'food-item-row');
-                
-                // Store original data with full precision (using toString() instead of toFixed(1))
-                componentDiv.dataset.originalAmount = item.originalAmountGrams.toString();
-                componentDiv.dataset.originalProtein = item.estimatedProtein.toString();
-                componentDiv.dataset.originalCarbs = item.estimatedCarbs.toString();
-                componentDiv.dataset.originalFat = item.estimatedFat.toString();
-
-                componentDiv.innerHTML = `
-                    <div class="w-3/5 pr-2">
-                        <input type="text" 
-                            value="${item.foodName}"
-                            data-original-name="${item.foodName}"
-                            class="food-name-input w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded-lg text-gray-100 text-sm focus:ring-blue-500 focus:border-blue-500 truncate"
-                            title="Edit food name"
-                        />
-                    </div>
-                    <div class="w-2/5 flex items-center">
-                        <input type="number" 
-                            id="item-${index}"
-                            min="0" step="1" 
-                            value="${item.originalAmountGrams.toFixed(0)}" 
-                            placeholder="g"
-                            class="w-full px-2 py-1 bg-gray-900 border border-gray-700 rounded-lg text-gray-100 text-center text-sm focus:ring-blue-500 focus:border-blue-500"
-                        />
-                        <span class="ml-1 text-xs text-gray-400">g</span>
-                    </div>
-                `;
-                ui.foodComponentList.appendChild(componentDiv);
-            });
-        }
-
-        /**
-         * Displays the nutrient results in the dedicated card and initializes the refine section.
-         * @param {object} data - The parsed JSON data from the Gemini model.
+         * Renders the macro results into the UI.
          */
         function displayResults(data) {
-            const totalMacros = data.totalMacros;
+            const resultsContainer = document.getElementById('results-container');
+            const identifiedItems = document.getElementById('identified-items');
+            const dailyInsight = document.getElementById('daily-insight');
 
-            // Check for valid data structure
-            if (!totalMacros || !data.foodItems || !data.confidenceLevel) {
-                displayError("Analysis data is incomplete. The model may not have been able to identify the components. Please try again with a clearer photo.");
-                return;
-            }
-            
-            // --- 1. Main Results Card Update ---
-            ui.foodTitle.textContent = data.foodDescription;
-            // The total serving size is now the sum of all components
-            const totalGrams = data.foodItems.reduce((sum, item) => sum + item.originalAmountGrams, 0);
-            ui.servingInfo.textContent = `Estimated Meal Weight: ${totalGrams.toFixed(0)}g`;
-            ui.confidenceIndicator.textContent = data.confidenceLevel;
+            // Set the main macro values
+            document.getElementById('cal-result').textContent = `${data.calories.toFixed(0)} kcal`;
+            document.getElementById('protein-result').textContent = `${data.protein_grams.toFixed(1)}g`;
+            document.getElementById('carbs-result').textContent = `${data.carbs_grams.toFixed(1)}g`;
+            document.getElementById('fat-result').textContent = `${data.fat_grams.toFixed(1)}g`;
 
-            // Update main display based on AI's initial total data
-            updateDisplayValues(totalMacros.proteinGrams, totalMacros.carbGrams, totalMacros.fatGrams);
+            // Set the descriptive text
+            dailyInsight.textContent = data.insight;
+            identifiedItems.textContent = data.identified_items;
 
-            ui.resultsCard.classList.remove('hidden');
-            
-            // --- 2. Refine Section Initialization ---
-            buildComponentList(data.foodItems);
-            ui.refineSection.classList.remove('hidden');
+            // Simple calculation for macro percentages 
+            const totalMacros = data.protein_grams * 4 + data.carbs_grams * 4 + data.fat_grams * 9;
+
+            const proteinPercent = totalMacros > 0 ? (data.protein_grams * 4 / totalMacros) : 0;
+            const carbsPercent = totalMacros > 0 ? (data.carbs_grams * 4 / totalMacros) : 0;
+            const fatPercent = totalMacros > 0 ? (data.fat_grams * 9 / totalMacros) : 0;
+
+            document.getElementById('protein-percent').textContent = `${(proteinPercent * 100).toFixed(0)}%`;
+            document.getElementById('carbs-percent').textContent = `${(carbsPercent * 100).toFixed(0)}%`;
+            document.getElementById('fat-percent').textContent = `${(fatPercent * 100).toFixed(0)}%`;
+
+            document.getElementById('protein-bar').style.width = `${Math.min(100, proteinPercent * 100)}%`;
+            document.getElementById('carbs-bar').style.width = `${Math.min(100, carbsPercent * 100)}%`;
+            document.getElementById('fat-bar').style.width = `${Math.min(100, fatPercent * 100)}%`;
+
+            resultsContainer.classList.remove('hidden');
         }
 
-        /**
-         * Displays a temporary error message.
-         * @param {string} message - The error message to display.
-         */
-        function displayError(message) {
-            ui.errorMessage.textContent = message;
-            ui.errorMessage.classList.remove('hidden');
-        }
-        
-        // --- Initialization ---
-        document.addEventListener('DOMContentLoaded', () => {
-            // Initialization logic remains simple
-        });
     </script>
+    <style>
+        /* Custom CSS for Inter font, modern look, and macro bars */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .dark {
+            color-scheme: dark;
+        }
+        .macro-bar-container {
+            height: 6px; /* Slightly thinner bar */
+            border-radius: 3px;
+            background-color: #e5e7eb; /* Gray 200 */
+            overflow: hidden;
+            width: 100%;
+        }
+        .dark .macro-bar-container {
+            background-color: #374151; /* Gray 700 */
+        }
+        .macro-bar {
+            height: 100%;
+            transition: width 0.5s ease-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <!-- Overall Content Wrapper to control max width and centering -->
+    <div class="max-w-xl mx-auto p-4 sm:p-8">
+
+        <!-- Header and Theme Toggle -->
+        <header class="mb-6 flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded-xl shadow-md dark:shadow-lg transition-colors">
+            <h1 class="text-xl font-bold text-gray-800 dark:text-gray-100">Macro Photo Analyzer</h1>
+            <button id="theme-toggle" onclick="toggleTheme()" class="p-2 text-gray-600 dark:text-gray-300 hover:text-primary-green dark:hover:text-primary-green transition duration-300 rounded-full">
+                <span id="theme-icon"></span>
+            </button>
+        </header>
+
+        <!-- Main Content Card (Input Area) -->
+        <div class="bg-white dark:bg-gray-900 p-6 rounded-xl shadow-2xl dark:shadow-none dark:border dark:border-gray-700 transition-colors">
+            <h2 class="text-2xl font-semibold mb-6 text-gray-700 dark:text-gray-200">Scan Your Meal</h2>
+
+            <!-- Image Upload and Preview Area -->
+            <div class="mb-6 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-6 text-center hover:border-primary-green transition duration-300">
+                <input type="file" accept="image/*" id="file-input" class="hidden" onchange="handleFileSelect(event)">
+                <label for="file-input" class="cursor-pointer flex flex-col items-center justify-center">
+                    <svg class="w-10 h-10 text-gray-400 dark:text-gray-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.218A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.218A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span class="text-gray-600 dark:text-gray-300 font-medium">Click to upload a meal photo</span>
+                    <span class="text-xs text-gray-400 dark:text-gray-500">(JPEG or PNG)</span>
+                </label>
+                <img id="image-preview" src="" alt="Meal Preview" class="mt-4 max-h-64 w-full object-contain rounded-lg shadow-md hidden mx-auto">
+            </div>
+
+            <!-- Refinement Input Area - NEW SECTION -->
+            <div class="mb-6">
+                <label for="refinement-input" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Optional: Fine-tune analysis (e.g., weights, specific ingredients)
+                </label>
+                <textarea id="refinement-input" rows="3" 
+                          placeholder="Example: The meat is 150g of lean ground turkey. The rice is 1 cup cooked. Everything was cooked with 1 tablespoon of olive oil."
+                          class="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-800 dark:text-gray-100 focus:ring-primary-green focus:border-primary-green transition duration-200 resize-none"></textarea>
+            </div>
+
+            <!-- Action Button -->
+            <button id="analyze-button" onclick="analyzeMeal()" disabled
+                    class="w-full py-3 bg-primary-green text-white font-bold rounded-lg shadow-lg hover:bg-green-600 transition duration-300 disabled:bg-gray-400 flex items-center justify-center">
+                <span id="loading-spinner" class="hidden mr-2">
+                    <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </span>
+                <span>Analyze Meal Macros</span>
+            </button>
+        </div>
+
+        <!-- Message Box -->
+        <div id="message-box" class="hidden"></div>
+
+        <!-- Results Container (Initially Hidden) -->
+        <div id="results-container" class="mt-8 hidden">
+            <h3 class="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Analysis Results</h3>
+
+            <!-- 1. Insight & Identified Items Summary Card -->
+            <div class="bg-white dark:bg-gray-900 p-6 rounded-xl shadow-lg dark:shadow-none dark:border dark:border-gray-700 mb-6">
+                <div class="border-b border-gray-100 dark:border-gray-800 pb-4 mb-4">
+                    <p class="text-lg font-semibold text-primary-green mb-1 flex items-center">
+                        <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"></path></svg>
+                        Daily Insight
+                    </p>
+                    <p id="daily-insight" class="text-gray-700 dark:text-gray-300 italic"></p>
+                </div>
+                
+                <p class="text-md font-semibold text-gray-700 dark:text-gray-300 mb-2">Identified Components:</p>
+                <p id="identified-items" class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed"></p>
+            </div>
+
+            <!-- 2. Macro Cards Grid -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+
+                <!-- Calories Card -->
+                <div class="p-4 bg-white dark:bg-card-bg-dark rounded-xl shadow-md dark:shadow-none dark:border dark:border-gray-700 flex flex-col justify-between transition-colors">
+                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Calories</p>
+                    <p id="cal-result" class="text-3xl font-extrabold text-accent-blue dark:text-blue-400"></p>
+                </div>
+
+                <!-- Protein Card -->
+                <div class="p-4 bg-white dark:bg-card-bg-dark rounded-xl shadow-md dark:shadow-none dark:border dark:border-gray-700 flex flex-col justify-between transition-colors">
+                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Protein</p>
+                    <p id="protein-result" class="text-3xl font-extrabold text-red-600 dark:text-red-400"></p>
+                    <div class="mt-3">
+                        <div id="protein-bar-container" class="macro-bar-container">
+                            <div id="protein-bar" class="macro-bar bg-red-600" style="width: 0%;"></div>
+                        </div>
+                        <p id="protein-percent" class="text-xs font-semibold text-red-600 dark:text-red-400 mt-1 text-right"></p>
+                    </div>
+                </div>
+
+                <!-- Carbs Card -->
+                <div class="p-4 bg-white dark:bg-card-bg-dark rounded-xl shadow-md dark:shadow-none dark:border dark:border-gray-700 flex flex-col justify-between transition-colors">
+                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Carbs</p>
+                    <p id="carbs-result" class="text-3xl font-extrabold text-yellow-600 dark:text-yellow-400"></p>
+                    <div class="mt-3">
+                        <div id="carbs-bar-container" class="macro-bar-container">
+                            <div id="carbs-bar" class="macro-bar bg-yellow-600" style="width: 0%;"></div>
+                        </div>
+                        <p id="carbs-percent" class="text-xs font-semibold text-yellow-600 dark:text-yellow-400 mt-1 text-right"></p>
+                    </div>
+                </div>
+
+                <!-- Fat Card -->
+                <div class="p-4 bg-white dark:bg-card-bg-dark rounded-xl shadow-md dark:shadow-none dark:border dark:border-gray-700 flex flex-col justify-between transition-colors">
+                    <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">Fat</p>
+                    <p id="fat-result" class="text-3xl font-extrabold text-purple-600 dark:text-purple-400"></p>
+                    <div class="mt-3">
+                        <div id="fat-bar-container" class="macro-bar-container">
+                            <div id="fat-bar" class="macro-bar bg-purple-600" style="width: 0%;"></div>
+                        </div>
+                        <p id="fat-percent" class="text-xs font-semibold text-purple-600 dark:text-purple-400 mt-1 text-right"></p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
 </body>
 </html>
-
-
-
-
